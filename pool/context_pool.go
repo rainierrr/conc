@@ -36,13 +36,17 @@ func (p *ContextPool) Go(f func(ctx context.Context) error) {
 		}
 
 		err := f(p.ctx)
+
 		if err != nil && p.cancelOnError {
 			// Leaky abstraction warning: We add the error directly because
 			// otherwise, canceling could cause another goroutine to exit and
 			// return an error before this error was added, which breaks the
 			// expectations of WithFirstError().
+			// fmt.Printf("err: %v, errLimit %d\n", err, p.errorPool.ErrLimit())
+			if p.errorPool.ErrLimit() == 1 {
+				p.cancel()
+			}
 			p.errorPool.addErr(err)
-			p.cancel()
 			return nil
 		}
 		return err
@@ -67,6 +71,12 @@ func (p *ContextPool) WithFirstError() *ContextPool {
 	return p
 }
 
+func (p *ContextPool) WithErrorLimit(n int) *ContextPool {
+	p.panicIfInitialized()
+	p.errorPool.WithErrorLimit(n)
+	return p
+}
+
 // WithCancelOnError configures the pool to cancel its context as soon as
 // any task returns an error or panics. By default, the pool's context is not
 // canceled until the parent context is canceled.
@@ -78,6 +88,7 @@ func (p *ContextPool) WithFirstError() *ContextPool {
 func (p *ContextPool) WithCancelOnError() *ContextPool {
 	p.panicIfInitialized()
 	p.cancelOnError = true
+	p.errorPool.WithErrorLimit(1)
 	return p
 }
 

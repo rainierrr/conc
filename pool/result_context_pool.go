@@ -45,6 +45,13 @@ func (p *ResultContextPool[T]) WithCollectErrored() *ResultContextPool[T] {
 	return p
 }
 
+func (p *ResultContextPool[T]) WithErrorLimit(n int) *ResultContextPool[T] {
+	p.panicIfInitialized()
+	p.contextPool.WithErrorLimit(n)
+	p.contextPool.WithCancelOnError()
+	return p
+}
+
 // WithFirstError configures the pool to only return the first error
 // returned by a task. By default, Wait() will return a combined error.
 func (p *ResultContextPool[T]) WithFirstError() *ResultContextPool[T] {

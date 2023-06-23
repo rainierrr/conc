@@ -18,9 +18,9 @@ type ErrorPool struct {
 	pool Pool
 
 	onlyFirstError bool
-
-	mu   sync.Mutex
-	errs error
+	errLimit       int
+	mu             sync.Mutex
+	errs           error
 }
 
 // Go submits a task to the pool. If all goroutines in the pool
@@ -60,12 +60,27 @@ func (p *ErrorPool) WithFirstError() *ErrorPool {
 	return p
 }
 
+func (p *ErrorPool) WithErrorLimit(n int) *ErrorPool {
+	p.panicIfInitialized()
+	if n < 1 {
+		panic("error limit must be greater than one")
+	}
+	p.errLimit = n
+	return p
+}
+
 // WithMaxGoroutines limits the number of goroutines in a pool.
 // Defaults to unlimited. Panics if n < 1.
 func (p *ErrorPool) WithMaxGoroutines(n int) *ErrorPool {
 	p.panicIfInitialized()
 	p.pool.WithMaxGoroutines(n)
 	return p
+}
+
+func (p *ErrorPool) ErrLimit() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.errLimit
 }
 
 // deref is a helper that creates a shallow copy of the pool with the same
@@ -91,6 +106,9 @@ func (p *ErrorPool) addErr(err error) {
 			}
 		} else {
 			p.errs = multierror.Join(p.errs, err)
+		}
+		if p.errLimit > 0 {
+			p.errLimit--
 		}
 		p.mu.Unlock()
 	}

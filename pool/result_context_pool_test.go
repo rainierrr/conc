@@ -169,6 +169,32 @@ func TestResultContextPool(t *testing.T) {
 		require.ErrorIs(t, err, err1)
 	})
 
+	t.Run("WithErrorLimit", func(t *testing.T) {
+		t.Parallel()
+		g := NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(2)
+		g.Go(func(ctx context.Context) (int, error) {
+			<-ctx.Done()
+			return 0, ctx.Err()
+		})
+		g.Go(func(ctx context.Context) (int, error) {
+			return 0, err1
+		})
+		g.Go(func(ctx context.Context) (int, error) {
+			return 0, err2
+		})
+
+		res, err := g.Wait()
+		require.Len(t, res, 0)
+		require.ErrorIs(t, err, context.Canceled)
+		require.ErrorIs(t, err, err1)
+		require.ErrorIs(t, err, err2)
+	})
+
+	t.Run("panics on invalid WithErrorLimit", func(t *testing.T) {
+		t.Parallel()
+		require.Panics(t, func() { NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(0) })
+	})
+
 	t.Run("WithFirstError", func(t *testing.T) {
 		t.Parallel()
 		g := NewWithResults[int]().WithContext(context.Background()).WithFirstError()
