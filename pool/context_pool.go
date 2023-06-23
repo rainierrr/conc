@@ -42,7 +42,6 @@ func (p *ContextPool) Go(f func(ctx context.Context) error) {
 			// otherwise, canceling could cause another goroutine to exit and
 			// return an error before this error was added, which breaks the
 			// expectations of WithFirstError().
-			// fmt.Printf("err: %v, errLimit %d\n", err, p.errorPool.ErrLimit())
 			if p.errorPool.ErrLimit() == 1 {
 				p.cancel()
 			}
