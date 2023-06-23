@@ -170,29 +170,114 @@ func TestResultContextPool(t *testing.T) {
 	})
 
 	t.Run("WithErrorLimit", func(t *testing.T) {
-		t.Parallel()
-		g := NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(2)
-		g.Go(func(ctx context.Context) (int, error) {
-			<-ctx.Done()
-			return 0, ctx.Err()
+		t.Run("return result and no error and no errors", func(t *testing.T) {
+			t.Parallel()
+			g := NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(1)
+			ch := make(chan struct{})
+			g.Go(func(ctx context.Context) (int, error) {
+				<-ch
+				return 0, nil
+			})
+
+			g.Go(func(ctx context.Context) (int, error) {
+				ch <- struct{}{}
+				return 0, nil
+			})
+
+			res, err := g.Wait()
+			require.Len(t, res, 2)
+			require.NoError(t, err)
 		})
-		g.Go(func(ctx context.Context) (int, error) {
-			return 0, err1
-		})
-		g.Go(func(ctx context.Context) (int, error) {
-			return 0, err2
+		t.Run("if error ocurred", func(t *testing.T) {
+
+			t.Run(("return no errors and result if error limit not reached"), func(t *testing.T) {
+				t.Parallel()
+				g := NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(1)
+				ch := make(chan struct{})
+				g.Go(func(ctx context.Context) (int, error) {
+					<-ch
+					return 0, nil
+				})
+
+				g.Go(func(ctx context.Context) (int, error) {
+					ch <- struct{}{}
+					return 0, err1
+				})
+
+				res, err := g.Wait()
+				require.Len(t, res, 1)
+				require.ErrorIs(t, err, err1)
+			})
+
+			t.Run(("return errors and result if error limit reached"), func(t *testing.T) {
+				t.Parallel()
+				g := NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(2)
+				g.Go(func(ctx context.Context) (int, error) {
+					<-ctx.Done()
+					return 0, ctx.Err()
+				})
+				g.Go(func(ctx context.Context) (int, error) {
+					return 0, err1
+				})
+				g.Go(func(ctx context.Context) (int, error) {
+					return 0, err2
+				})
+
+				res, err := g.Wait()
+				require.Len(t, res, 0)
+				require.ErrorIs(t, err, context.Canceled)
+				require.ErrorIs(t, err, err1)
+				require.ErrorIs(t, err, err2)
+			})
+
+			t.Run(("panic if panic occured in goroutine for task"), func(t *testing.T) {
+				t.Parallel()
+				p := NewWithResults[int]().
+					WithContext(context.Background()).
+					WithErrorLimit(2)
+
+				var cancelledTasks atomic.Int64
+				p.Go(func(ctx context.Context) (int, error) {
+					<-ctx.Done()
+					cancelledTasks.Add(1)
+					return 0, ctx.Err()
+				})
+				p.Go(func(ctx context.Context) (int, error) {
+					<-ctx.Done()
+					cancelledTasks.Add(1)
+					return 0, ctx.Err()
+				})
+				p.Go(func(ctx context.Context) (int, error) {
+					panic("abort!")
+				})
+				assert.Panics(t, func() { _, _ = p.Wait() })
+				assert.EqualValues(t, 2, cancelledTasks.Load())
+			})
 		})
 
-		res, err := g.Wait()
-		require.Len(t, res, 0)
-		require.ErrorIs(t, err, context.Canceled)
-		require.ErrorIs(t, err, err1)
-		require.ErrorIs(t, err, err2)
-	})
+		t.Run(("configuration"), func(t *testing.T) {
+			t.Run("panics on invalid WithErrorLimit", func(t *testing.T) {
+				t.Parallel()
+				require.Panics(t, func() { NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(0) })
+			})
 
-	t.Run("panics on invalid WithErrorLimit", func(t *testing.T) {
-		t.Parallel()
-		require.Panics(t, func() { NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(0) })
+			t.Run("panics on configuration after init", func(t *testing.T) {
+				t.Run("before wait", func(t *testing.T) {
+					t.Parallel()
+					g := NewWithResults[int]().WithContext(context.Background())
+					g.Go(func(context.Context) (int, error) { return 0, nil })
+					require.Panics(t, func() { g.WithErrorLimit(2) })
+				})
+
+				t.Run("after wait", func(t *testing.T) {
+					t.Parallel()
+					g := NewWithResults[int]().WithContext(context.Background())
+					g.Go(func(context.Context) (int, error) { return 0, nil })
+					_, _ = g.Wait()
+					require.Panics(t, func() { g.WithMaxGoroutines(2) })
+				})
+			})
+		})
 	})
 
 	t.Run("WithFirstError", func(t *testing.T) {
