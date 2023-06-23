@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,6 +20,8 @@ func TestResultContextPool(t *testing.T) {
 
 	err1 := errors.New("err1")
 	err2 := errors.New("err2")
+	err3 := errors.New("err3")
+	errs := []error{err1, err2, err3}
 
 	t.Run("panics on configuration after init", func(t *testing.T) {
 		t.Run("before wait", func(t *testing.T) {
@@ -172,7 +175,7 @@ func TestResultContextPool(t *testing.T) {
 	t.Run("WithErrorLimit", func(t *testing.T) {
 		t.Run("return result and no error and no errors", func(t *testing.T) {
 			t.Parallel()
-			g := NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(1)
+			g := NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(2)
 			ch := make(chan struct{})
 			g.Go(func(ctx context.Context) (int, error) {
 				<-ch
@@ -192,21 +195,25 @@ func TestResultContextPool(t *testing.T) {
 
 			t.Run(("return no errors and result if error limit not reached"), func(t *testing.T) {
 				t.Parallel()
-				g := NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(1)
-				ch := make(chan struct{})
+				g := NewWithResults[int]().WithContext(context.Background()).WithErrorLimit(2)
+
+				wg := sync.WaitGroup{}
+				wg.Add(2)
 				g.Go(func(ctx context.Context) (int, error) {
-					<-ch
+					wg.Wait()
 					return 0, nil
 				})
-
-				g.Go(func(ctx context.Context) (int, error) {
-					ch <- struct{}{}
-					return 0, err1
-				})
+				for i := 0; i < 2; i++ {
+					g.Go(func(ctx context.Context) (int, error) {
+						defer wg.Done()
+						return 0, errs[i]
+					})
+				}
 
 				res, err := g.Wait()
 				require.Len(t, res, 1)
 				require.ErrorIs(t, err, err1)
+				require.ErrorIs(t, err, err2)
 			})
 
 			t.Run(("return errors and result if error limit reached"), func(t *testing.T) {
@@ -216,18 +223,18 @@ func TestResultContextPool(t *testing.T) {
 					<-ctx.Done()
 					return 0, ctx.Err()
 				})
-				g.Go(func(ctx context.Context) (int, error) {
-					return 0, err1
-				})
-				g.Go(func(ctx context.Context) (int, error) {
-					return 0, err2
-				})
+				for i := 0; i < 3; i++ {
+					g.Go(func(ctx context.Context) (int, error) {
+						return 0, errs[i]
+					})
+				}
 
 				res, err := g.Wait()
 				require.Len(t, res, 0)
 				require.ErrorIs(t, err, context.Canceled)
 				require.ErrorIs(t, err, err1)
 				require.ErrorIs(t, err, err2)
+				require.ErrorIs(t, err, err3)
 			})
 
 			t.Run(("panic if panic occured in goroutine for task"), func(t *testing.T) {
